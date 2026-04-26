@@ -1,0 +1,260 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "Drainage Monitoring IoT API",
+        "version": "1.0.0",
+        "description": "API untuk monitoring drainase berbasis IoT dengan WebSocket, InfluxDB, dan alert system."
+    },
+    "servers": [
+        {
+            "url": "http://localhost:3000"
+        }
+    ],
+    "paths": {
+        "/api/health": {
+            "get": {
+                "summary": "Health check",
+                "responses": {
+                    "200": {
+                        "description": "API healthy",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HealthResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/upload-image": {
+            "post": {
+                "summary": "Upload image dari ESP32-CAM",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "image": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "device_id": {
+                                        "type": "string",
+                                        "example": "dev01"
+                                    }
+                                },
+                                "required": [
+                                    "image",
+                                    "device_id"
+                                ]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Upload success",
+                        "content": {
+                            "application/json": {
+                                "$ref": "#/components/schemas/GenericSuccessResponse"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sensor/history/{device_id}": {
+            "get": {
+                "summary": "Get sensor history",
+                "parameters": [
+                    {
+                        "name": "device_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "start_date",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    },
+                    {
+                        "name": "end_date",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success get history",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SensorHistoryResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "$ref": "#/components/schemas/ValidationErrorResponse"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sensor/latest/{device_id}": {
+            "get": {
+                "summary": "Get latest sensor data (last 1 hour)",
+                "parameters": [
+                    {
+                        "name": "device_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Success get latest",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SensorHistoryResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/ws": {
+            "get": {
+                "summary": "WebSocket endpoint",
+                "description": "Stream real-time sensor & alert data",
+                "responses": {
+                    "101": {
+                        "description": "Switching Protocols"
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "SensorHistory": {
+                "type": "object",
+                "properties": {
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "water_distance": {
+                        "type": "number"
+                    },
+                    "rain_detected": {
+                        "type": "boolean"
+                    },
+                    "rain_intensity": {
+                        "type": "number"
+                    }
+                }
+            },
+            "SensorHistoryResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "success"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Success get sensor history"
+                    },
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SensorHistory"
+                        }
+                    }
+                }
+            },
+            "HealthResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "success"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "API is healthy"
+                    },
+                    "data": {
+                        "type": "null",
+                        "example": null
+                    }
+                }
+            },
+            "GenericSuccessResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "success"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Operation successful"
+                    },
+                    "data": {
+                        "type": "object",
+                        "nullable": true
+                    }
+                }
+            },
+            "ValidationErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "error"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Validation error"
+                    },
+                    "error": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "example": {
+                            "start_date": "required",
+                            "end_date": "invalid format"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

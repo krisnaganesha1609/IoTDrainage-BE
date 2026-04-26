@@ -1,0 +1,158 @@
+asyncapi: 2.6.0
+
+info:
+  title: Drainage Monitoring IoT System
+  version: 1.0.0
+  description: |
+    Sistem monitoring drainase berbasis IoT yang menggunakan MQTT untuk ingest data sensor 
+    dan WebSocket untuk real-time streaming ke aplikasi mobile.
+
+    ## 🔌 MQTT Configuration (.env)
+    - MQTT_BROKER: check-on-env
+    - MQTT_TOPIC: check-on-env
+
+    ## ⚡ Flow
+    Device → MQTT → Backend → InfluxDB + WebSocket → Mobile App
+
+servers:
+  mqttBroker:
+    url: broker.emqx.io:1883
+    protocol: mqtt
+    description: Public MQTT broker (EMQX)
+
+channels:
+
+  # =========================
+  # MQTT - SENSOR INGESTION
+  # =========================
+  check-on-env:
+    description: Channel untuk pengiriman data sensor dari device IoT
+    publish:
+      summary: IoT device mengirim data sensor
+      operationId: publishSensorData
+      message:
+        $ref: '#/components/messages/SensorDataMessage'
+
+  # =========================
+  # WEBSOCKET - REALTIME STREAM
+  # =========================
+  ws:
+    description: Channel untuk streaming data sensor ke client mobile secara real-time
+    subscribe:
+      summary: Client menerima data sensor real-time dan juga alert jika terjadi kondisi abnormal 
+      operationId: receiveSensorData
+      message:
+        $ref: '#/components/messages/WebSocketSensorMessage'
+
+
+components:
+
+  messages:
+
+    # =========================
+    # MQTT MESSAGE
+    # =========================
+    SensorDataMessage:
+      name: SensorDataMessage
+      title: Sensor Data Payload
+      summary: Payload data sensor dari device IoT
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/SensorDataRequest'
+
+    # =========================
+    # WEBSOCKET SENSOR
+    # =========================
+    WebSocketSensorMessage:
+      name: WebSocketSensorMessage
+      title: WebSocket Sensor Message
+      summary: Real-time sensor data
+      contentType: application/json
+      payload:
+        type: object
+        properties:
+          type:
+            type: string
+            example: sensor
+          data:
+            $ref: '#/components/schemas/SensorWSData'
+
+    # =========================
+    # WEBSOCKET ALERT
+    # =========================
+    WebSocketAlertMessage:
+      name: WebSocketAlertMessage
+      title: WebSocket Alert Message
+      summary: Alert ketika terjadi kondisi abnormal
+      contentType: application/json
+      payload:
+        type: object
+        properties:
+          type:
+            type: string
+            example: alert
+          data:
+            $ref: '#/components/schemas/AlertWSData'
+
+  schemas:
+
+    # =========================
+    # MQTT REQUEST SCHEMA
+    # =========================
+    SensorDataRequest:
+      type: object
+      properties:
+        device_id:
+          type: string
+          example: dev01
+        location:
+          type: string
+          example: Gate A Drainage
+        water_distance:
+          type: number
+          example: 14.2
+        rain_detected:
+          type: boolean
+          example: true
+        rain_intensity:
+          type: number
+          example: 0.65
+      required:
+        - device_id
+        - water_distance
+        - rain_detected
+
+    # =========================
+    # WEBSOCKET SENSOR DATA
+    # =========================
+    SensorWSData:
+      type: object
+      properties:
+        device_id:
+          type: string
+          example: dev01
+        water_distance:
+          type: number
+          example: 14.2
+        rain_detected:
+          type: boolean
+          example: true
+        rain_intensity:
+          type: number
+          example: 0.65
+        timestamp:
+          type: integer
+          example: 1714039200
+
+    # =========================
+    # ALERT DATA
+    # =========================
+    AlertWSData:
+      type: object
+      properties:
+        device_id:
+          type: string
+          example: dev01
+        alert:
+          type: string
+          example: BLOCKAGE
