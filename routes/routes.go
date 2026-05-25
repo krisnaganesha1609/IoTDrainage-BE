@@ -36,15 +36,23 @@ func (r *Routes) Setup(app *fiber.App) {
 		return utils.RespondWithOK(c, "API is healthy", nil)
 	})
 
-	api.Post("/upload-image", func(c fiber.Ctx) error {
-		return r.Handler.UploadImage(c)
-	})
-
 	api.Get("/sensor/history/:device_id", func(c fiber.Ctx) error {
 		return r.Handler.GetSensorHistory(c)
 	})
 
 	api.Get("/sensor/latest/:device_id", func(c fiber.Ctx) error {
 		return r.Handler.GetLatestSensorData(c)
+	})
+
+	api.Get("/image", func(c fiber.Ctx) error {
+		return r.Handler.GetLatestImage(c)
+	})
+
+	api.Post("/image", func(c fiber.Ctx) error {
+		return r.Handler.UploadImage(c)
+	})
+
+	api.Post("/register-token", func(c fiber.Ctx) error {
+		return r.Handler.RegisterToken(c)
 	})
 }

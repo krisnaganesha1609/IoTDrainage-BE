@@ -3,7 +3,7 @@
     "info": {
         "title": "Drainage Monitoring IoT API",
         "version": "1.0.0",
-        "description": "API untuk monitoring drainase berbasis IoT dengan WebSocket, InfluxDB, dan alert system."
+        "description": "API untuk monitoring drainase berbasis IoT dengan InfluxDB, Firestore, dan alert system."
     },
     "servers": [
         {
@@ -13,7 +13,7 @@
     "paths": {
         "/api/health": {
             "get": {
-                "summary": "Health check",
+                "summary": "Health check backend API",
                 "responses": {
                     "200": {
                         "description": "API healthy",
@@ -28,9 +28,24 @@
                 }
             }
         },
-        "/api/upload-image": {
+        "/api/image": {
+            "get": {
+                "summary": "Ambil metadata URL gambar drainase terakhir",
+                "responses": {
+                    "200": {
+                        "description": "Success get latest image metadata",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/LatestImageResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             "post": {
-                "summary": "Upload image dari ESP32-CAM",
+                "summary": "Upload image dari ESP32-CAM ke Cloudinary & InfluxDB",
                 "requestBody": {
                     "required": true,
                     "content": {
@@ -57,10 +72,12 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "Upload success",
+                        "description": "Upload image success",
                         "content": {
                             "application/json": {
-                                "$ref": "#/components/schemas/GenericSuccessResponse"
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericSuccessResponse"
+                                }
                             }
                         }
                     }
@@ -69,7 +86,7 @@
         },
         "/api/sensor/history/{device_id}": {
             "get": {
-                "summary": "Get sensor history",
+                "summary": "Get sensor history berdasarkan rentang waktu",
                 "parameters": [
                     {
                         "name": "device_id",
@@ -100,7 +117,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Success get history",
+                        "description": "Success get history data",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -110,10 +127,12 @@
                         }
                     },
                     "400": {
-                        "description": "Validation error",
+                        "description": "Validation error pada query parameter",
                         "content": {
                             "application/json": {
-                                "$ref": "#/components/schemas/ValidationErrorResponse"
+                                "schema": {
+                                    "$ref": "#/components/schemas/ValidationErrorResponse"
+                                }
                             }
                         }
                     }
@@ -122,7 +141,7 @@
         },
         "/api/sensor/latest/{device_id}": {
             "get": {
-                "summary": "Get latest sensor data (last 1 hour)",
+                "summary": "Get data sensor paling terakhir",
                 "parameters": [
                     {
                         "name": "device_id",
@@ -135,7 +154,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Success get latest",
+                        "description": "Success get latest single sensor data",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -147,13 +166,45 @@
                 }
             }
         },
-        "/ws": {
-            "get": {
-                "summary": "WebSocket endpoint",
-                "description": "Stream real-time sensor & alert data",
+        "/api/register-token": {
+            "post": {
+                "summary": "Registrasi multi-device FCM Token HP via Backend Gateway",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RegisterTokenRequest"
+                            }
+                        }
+                    }
+                },
                 "responses": {
-                    "101": {
-                        "description": "Switching Protocols"
+                    "200": {
+                        "description": "Token successfully registered/updated in Firestore",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/GenericSuccessResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request atau body payload tidak lengkap",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "type": "string",
+                                            "example": "device_id, app_instance_id, dan token wajib diisi"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -161,6 +212,31 @@
     },
     "components": {
         "schemas": {
+            "RegisterTokenRequest": {
+                "type": "object",
+                "required": [
+                    "device_id",
+                    "app_instance_id",
+                    "token"
+                ],
+                "properties": {
+                    "device_id": {
+                        "type": "string",
+                        "example": "dev01",
+                        "description": "ID unit IoT drainase yang dipantau"
+                    },
+                    "app_instance_id": {
+                        "type": "string",
+                        "example": "iphone_krisna_123",
+                        "description": "ID Unik perangkat HP pemantau"
+                    },
+                    "token": {
+                        "type": "string",
+                        "example": "fcm_token_firebase_abc123xyz...",
+                        "description": "FCM Token asli dari client-side mobile app"
+                    }
+                }
+            },
             "SensorHistory": {
                 "type": "object",
                 "properties": {
@@ -188,12 +264,38 @@
                     },
                     "message": {
                         "type": "string",
-                        "example": "Success get sensor history"
+                        "example": "Success operation"
                     },
                     "data": {
                         "type": "array",
                         "items": {
                             "$ref": "#/components/schemas/SensorHistory"
+                        }
+                    }
+                }
+            },
+            "LatestImageResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "success"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Success get latest image metadata"
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "example": "https://res.cloudinary.com/demo/image/upload/v1234/drainage.jpg"
+                            },
+                            "last_updated": {
+                                "type": "integer",
+                                "example": 1698240000
+                            }
                         }
                     }
                 }
@@ -210,7 +312,8 @@
                         "example": "API is healthy"
                     },
                     "data": {
-                        "type": "null",
+                        "type": "object",
+                        "nullable": true,
                         "example": null
                     }
                 }
@@ -228,7 +331,8 @@
                     },
                     "data": {
                         "type": "object",
-                        "nullable": true
+                        "nullable": true,
+                        "example": null
                     }
                 }
             },

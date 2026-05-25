@@ -2,14 +2,6 @@ package utils
 
 import "time"
 
-type DeviceState struct {
-	LastDistances []float64
-	LastTimes     []time.Time
-	LastAlertTime time.Time
-}
-
-var DeviceStates = make(map[string]*DeviceState)
-
 type AlertType string
 
 const (
@@ -17,3 +9,13 @@ const (
 	Blockage  AlertType = "BLOCKAGE"
 	RainInfo  AlertType = "RAIN_INFO"
 )
+
+type DeviceState struct {
+	LastAlertTime  time.Time         // Tetap simpan di RAM untuk bypass cepat di engine
+	LastDistances  []float64         // Untuk deteksi tren blockage
+	LastTimesSlice []time.Time       // Untuk tracking waktu slice tren
+	LastTimes      map[int]time.Time // Bawaan dari kode awal Websocket-mu
+}
+
+// Global state di RAM
+var DeviceStates = make(map[string]*DeviceState)

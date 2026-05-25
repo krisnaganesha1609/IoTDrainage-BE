@@ -56,8 +56,10 @@ func init() {
 	}
 	mqttClient = mqttcl
 
+	firebase := utils.InitFirebase()
+
 	repo = repositories.InitializeRepository(influx, cloudinary)
-	service = services.InitializeService(repo)
+	service = services.InitializeService(repo, firebase)
 	handler = handlers.InitializeHandler(service)
 	route = routes.InitializeRoutes(handler)
 }

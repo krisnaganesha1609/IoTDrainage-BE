@@ -16,3 +16,11 @@ func (h *Handler) UploadImage(c fiber.Ctx) error {
 	}
 	return utils.RespondWithCreated(c, "", fiber.Map{"secure_url": secureURL})
 }
+
+func (h *Handler) GetLatestImage(c fiber.Ctx) error {
+	image, err := h.Service.GetLatestImage()
+	if err != nil {
+		return err
+	}
+	return utils.RespondWithOK(c, "latest image retrieved successfully", image)
+}
