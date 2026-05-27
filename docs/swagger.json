@@ -30,7 +30,7 @@
         },
         "/api/image": {
             "get": {
-                "summary": "Ambil metadata URL gambar drainase terakhir",
+                "summary": "Ambil metadata URL gambar drainase paling terakhir dari Firestore",
                 "responses": {
                     "200": {
                         "description": "Success get latest image metadata",
@@ -41,11 +41,31 @@
                                 }
                             }
                         }
+                    },
+                    "404": {
+                        "description": "Belum ada data gambar di Firestore",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "error"
+                                        },
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Belum ada data gambar yang tersimpan"
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             },
             "post": {
-                "summary": "Upload image dari ESP32-CAM ke Cloudinary & InfluxDB",
+                "summary": "Upload image dari ESP32-CAM ke Cloudinary & simpan metadata ke Firestore",
                 "requestBody": {
                     "required": true,
                     "content": {
@@ -55,11 +75,13 @@
                                 "properties": {
                                     "image": {
                                         "type": "string",
-                                        "format": "binary"
+                                        "format": "binary",
+                                        "description": "File biner foto dari kamera sensor"
                                     },
                                     "device_id": {
                                         "type": "string",
-                                        "example": "dev01"
+                                        "example": "dev01",
+                                        "description": "ID unit IoT drainase pengirim gambar"
                                     }
                                 },
                                 "required": [
@@ -72,11 +94,25 @@
                 },
                 "responses": {
                     "200": {
-                        "description": "Upload image success",
+                        "description": "Upload dan simpan metadata Firestore sukses",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/GenericSuccessResponse"
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "success"
+                                        },
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Operation successful"
+                                        },
+                                        "data": {
+                                            "type": "string",
+                                            "example": "https://res.cloudinary.com/demo/image/upload/v1234/drainage.jpg"
+                                        }
+                                    }
                                 }
                             }
                         }

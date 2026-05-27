@@ -7,10 +7,14 @@ import (
 
 func (h *Handler) UploadImage(c fiber.Ctx) error {
 	file, err := c.FormFile("image")
+	deviceID := c.FormValue("device_id")
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "failed to get image from request")
+		return utils.RespondWithError(c, fiber.StatusBadRequest, "failed to get image from request")
 	}
-	secureURL, erro := h.Service.UploadImage(c, file)
+	if deviceID == "" {
+		return utils.RespondWithError(c, fiber.StatusBadRequest, "failed to get device_id from request")
+	}
+	secureURL, erro := h.Service.UploadImage(c, file, deviceID)
 	if erro != nil {
 		return erro
 	}

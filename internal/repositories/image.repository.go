@@ -5,10 +5,10 @@ import (
 	"mime/multipart"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 	"github.com/gofiber/fiber/v3"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	"github.com/influxdata/influxdb-client-go/v2/api"
+	"google.golang.org/api/iterator"
 )
 
 func (r *Repository) UploadImage(c fiber.Ctx, src multipart.File) (string, *fiber.Error) {
@@ -19,33 +19,44 @@ func (r *Repository) UploadImage(c fiber.Ctx, src multipart.File) (string, *fibe
 	return result.SecureURL, nil
 }
 
-func (r *Repository) InsertImageToInflux(imageURL string) (string, *fiber.Error) {
-	point := influxdb2.NewPoint(
-		"drainage_images",
-		map[string]string{},
-		map[string]interface{}{
-			"image_url": imageURL,
-		},
-		time.Now(),
-	)
-	if err := r.Influx.WriteAPI.WritePoint(context.Background(), point); err != nil {
-		return "", fiber.NewError(fiber.StatusInternalServerError, err.Error())
+// SEKARANG MENGGUNAKAN FIRESTORE!
+func (r *Repository) InsertImageToFirestore(deviceValidID string, imageURL string) (string, *fiber.Error) {
+	ctx := context.Background()
+
+	// Kita simpan ke koleksi global "drainage_images" dengan auto-generated ID dokumen
+	_, _, err := r.Firebase.Firestore.Collection("drainage_images").Add(ctx, map[string]interface{}{
+		"device_id":    deviceValidID,
+		"image_url":    imageURL,
+		"created_at":   time.Now(),
+		"last_updated": time.Now().Unix(),
+	})
+
+	if err != nil {
+		return "", fiber.NewError(fiber.StatusInternalServerError, "Gagal simpan metadata ke Firestore: "+err.Error())
 	}
+
 	return imageURL, nil
 }
 
-func (r *Repository) GetLatestImage() (*api.QueryTableResult, *fiber.Error) {
-	query := `
-    from(bucket: "iot_drainage")
-    |> range(start: 0)
-    |> filter(fn: (r) => r._measurement == "drainage_images")
-    |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-    |> sort(columns: ["_time"], desc: true)
-    |> limit(n:1)
-    `
-	result, err := r.Influx.QueryAPI.Query(context.Background(), query)
-	if err != nil {
-		return nil, fiber.NewError(fiber.StatusInternalServerError, err.Error())
+// AMBIL GAMBAR TERAKHIR DARI FIRESTORE (Query-nya jauh lebih simpel dibanding Flux!)
+func (r *Repository) GetLatestImageFromFirestore() (map[string]interface{}, *fiber.Error) {
+	ctx := context.Background()
+
+	// Query: Urutkan berdasarkan created_at secara descending (terbaru di atas) dan batasi hanya 1 data
+	query := r.Firebase.Firestore.Collection("drainage_images").
+		OrderBy("created_at", firestore.Desc).
+		Limit(1).
+		Documents(ctx)
+
+	defer query.Stop()
+
+	doc, err := query.Next()
+	if err == iterator.Done {
+		return nil, fiber.NewError(fiber.StatusNotFound, "Belum ada data gambar yang tersimpan")
 	}
-	return result, nil
+	if err != nil {
+		return nil, fiber.NewError(fiber.StatusInternalServerError, "Gagal fetch data dari Firestore: "+err.Error())
+	}
+
+	return doc.Data(), nil
 }

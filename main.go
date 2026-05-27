@@ -58,7 +58,7 @@ func init() {
 
 	firebase := utils.InitFirebase()
 
-	repo = repositories.InitializeRepository(influx, cloudinary)
+	repo = repositories.InitializeRepository(influx, cloudinary, firebase)
 	service = services.InitializeService(repo, firebase)
 	handler = handlers.InitializeHandler(service)
 	route = routes.InitializeRoutes(handler)
