@@ -24,6 +24,12 @@ type FirestoreDeviceDoc struct {
 }
 
 func (s *Service) ProcessSensorData(request requests.SensorDataRequest) *fiber.Error {
+
+	if request.DeviceID == "" {
+		log.Println("[WARN] Payload sensor ditolak: device_id tidak boleh kosong!")
+		return fiber.NewError(fiber.StatusBadRequest, "device_id is required")
+	}
+
 	// 1. Selalu simpan data mentah dari sensor ke InfluxDB untuk keperluan historis/analis
 	if err := s.Repo.InsertSensorData(request.DeviceID, request.Location, request.WaterDistance, request.RainDetected, request.RainIntensity); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
