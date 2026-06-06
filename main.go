@@ -94,7 +94,7 @@ func main() {
 		Theme:             scalar.ThemeKepler,
 	}))
 
-	app.Get("/mqtt-docs/index.html", static.New("./docs/mqtt-docs/index.html"))
+	app.Use("/mqtt-docs/*", static.New("./docs/mqtt-docs"))
 
 	log.Fatal(app.Listen(":" + config.PORT))
 }

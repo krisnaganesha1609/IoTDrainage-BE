@@ -21,7 +21,7 @@ type Config struct {
 func InitConfig() (*Config, error) {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("No .env file found, relying on environment variables")
+		log.Println("No .env file found, relying on environment variables")
 	}
 	config := &Config{
 		PORT:           LoadEnv("PORT", "8080"),

@@ -17,7 +17,7 @@ type FirebaseServices struct {
 
 func InitFirebase() *FirebaseServices {
 	ctx := context.Background()
-	opt := option.WithAuthCredentialsFile(option.ServiceAccount, "serviceAccountKey.json")
+	opt := option.WithAuthCredentialsFile(option.ServiceAccount, "/app/serviceAccountKey.json")
 
 	app, err := firebase.NewApp(ctx, nil, opt)
 	if err != nil {
