@@ -48,7 +48,8 @@ func init() {
 	}
 	cloudinary = cld
 
-	mqttcnf := utils.LoadMQTTConfig(config.MQTT_BROKER, config.MQTT_TOPIC)
+	// MQTT — now driven by MQTT_BASE_TOPIC; three sub-topics are derived automatically.
+	mqttcnf := utils.LoadMQTTConfig(config.MQTT_BROKER, config.MQTT_BASE_TOPIC)
 	mqttConfig = mqttcnf
 	mqttcl, err := mqttConfig.InitMQTT()
 	if err != nil {
@@ -58,16 +59,27 @@ func init() {
 
 	firebase := utils.InitFirebase()
 
-	repo = repositories.InitializeRepository(influx, cloudinary, firebase)
+	// Pass INFLUX_BUCKET so Flux queries don't hardcode the bucket name.
+	repo = repositories.InitializeRepository(influx, cloudinary, firebase, config.INFLUX_BUCKET)
 	service = services.InitializeService(repo, firebase)
 	handler = handlers.InitializeHandler(service)
 	route = routes.InitializeRoutes(handler)
 }
 
 func main() {
+	// ── MQTT Subscribers ────────────────────────────────────────────────────
+	// Each runs in its own goroutine; they are pure subscribers (no publish).
 	go route.Handler.ReceiveSensorFromMQTT(mqttClient, mqttConfig)
+	go route.Handler.ReceiveSensorLogFromMQTT(mqttClient, mqttConfig)
+	go route.Handler.ReceiveDeviceInfoFromMQTT(mqttClient, mqttConfig)
 
-	app := fiber.New(fiber.Config{CaseSensitive: true,
+	// ── Watchdog Cron ────────────────────────────────────────────────────────
+	// Runs every minute; marks devices OFFLINE when they miss their wakeup window.
+	go service.RunWatchdog()
+
+	// ── HTTP Server ──────────────────────────────────────────────────────────
+	app := fiber.New(fiber.Config{
+		CaseSensitive:      true,
 		StrictRouting:      true,
 		EnableIPValidation: true,
 		StructValidator: &utils.Validator{
@@ -79,21 +91,20 @@ func main() {
 
 	route.Setup(app)
 
+	// Scalar API docs (HTTP)
 	swaggerBytes, err := os.ReadFile("./docs/swagger.json")
 	if err != nil {
 		log.Fatalf("Failed to read Swagger file: %v", err)
 	}
-
-	httpFileContentString := string(swaggerBytes)
-
 	app.Get("/http-docs/*", scalar.New(scalar.Config{
 		BasePath:          "/",
-		FileContentString: httpFileContentString,
+		FileContentString: string(swaggerBytes),
 		Path:              "/http-docs",
 		Title:             "IoT Drainage API Docs",
 		Theme:             scalar.ThemeKepler,
 	}))
 
+	// AsyncAPI docs (MQTT)
 	app.Use("/mqtt-docs/*", static.New("./docs/mqtt-docs"))
 
 	log.Fatal(app.Listen(":" + config.PORT))

@@ -15,7 +15,7 @@ import (
 	"github.com/krisnaganesha1609/IoTDrainage-BE/utils"
 )
 
-// Struct penampung data yang di-unmarshal dari Firestore dokumen
+// FirestoreDeviceDoc maps the Firestore device document for FCM token retrieval.
 type FirestoreDeviceDoc struct {
 	MobileDevices map[string]struct {
 		FCMToken  string    `firestore:"fcm_token"`
@@ -23,46 +23,105 @@ type FirestoreDeviceDoc struct {
 	} `firestore:"mobile_devices"`
 }
 
+// ProcessSensorData is the central handler for incoming MQTT telemetry.
+//
+// Architecture (Smart Publisher):
+//   - IoT's `status` field is Source of Truth (NORMAL/WASPADA/BAHAYA).
+//   - FCM is triggered when status == "BAHAYA" (from IoT) OR BLOCKAGE (from CEP).
+//   - Backend does NOT recalculate the flood status; it only stores and forwards.
 func (s *Service) ProcessSensorData(request requests.SensorDataRequest) *fiber.Error {
-
 	if request.DeviceID == "" {
-		log.Println("[WARN] Payload sensor ditolak: device_id tidak boleh kosong!")
+		log.Println("[WARN] Payload sensor ditolak: device_id kosong")
 		return fiber.NewError(fiber.StatusBadRequest, "device_id is required")
 	}
 
-	// 1. Selalu simpan data mentah dari sensor ke InfluxDB untuk keperluan historis/analis
-	if err := s.Repo.InsertSensorData(request.DeviceID, request.Location, request.WaterDistance, request.RainDetected, request.RainIntensity); err != nil {
+	// 1. Persist raw telemetry to InfluxDB using device-provided UTC timestamp.
+	if err := s.Repo.InsertSensorData(
+		request.DeviceID,
+		request.WaterDistance,
+		request.WaterLevelCm,
+		request.Status,
+		request.RainDetected,
+		request.SensorFlag,
+		request.NextWakeupSec,
+		request.Timestamp,
+	); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 
-	// 2. Jalankan Complex Event Processing (CEP) Engine di RAM untuk cek Rule & Tren
-	alertType, triggered := core.ProcessEvent(request.DeviceID, request.WaterDistance, request.RainDetected)
-
-	// CASE A: Tidak Ada Alert / Kondisi Aman
-	if !triggered {
-		forwarding := entities.WebsocketMessage{
-			Type: "sensor",
-			Data: map[string]interface{}{
-				"payload":   request,
-				"timestamp": time.Now().Unix(),
-			},
+	// 2. Update device heartbeat in Firestore for the watchdog cron.
+	go func() {
+		if err := s.Repo.UpdateDeviceHeartbeat(request.DeviceID, request.Timestamp, request.NextWakeupSec); err != nil {
+			log.Printf("[Heartbeat] Gagal update heartbeat device %s: %v", request.DeviceID, err)
 		}
+	}()
 
-		// Throttle Broadcast Websocket data normal (misal tiap 20 detik sekali) agar tidak spamming browser
-		if time.Since(utils.DeviceStates[request.DeviceID].LastTimes[4]) > 20*time.Second {
-			s.Broadcast(forwarding)
+	// 3. Broadcast live telemetry via WebSocket (throttled to 20 s for non-alert data).
+	wsMsg := entities.WebsocketMessage{
+		Type: "sensor",
+		Data: map[string]interface{}{
+			"payload":   request,
+			"timestamp": time.Now().Unix(),
+		},
+	}
+
+	state := utils.GetOrCreateDeviceState(request.DeviceID)
+	utils.DeviceStatesMu.RLock()
+	lastBroadcast := state.LastTimes[4]
+	utils.DeviceStatesMu.RUnlock()
+
+	if request.Status == "BAHAYA" || time.Since(lastBroadcast) > 20*time.Second {
+		s.Broadcast(wsMsg)
+		utils.DeviceStatesMu.Lock()
+		state.LastTimes[4] = time.Now()
+		utils.DeviceStatesMu.Unlock()
+	}
+
+	// 4a. FCM trigger: IoT reports BAHAYA status (Source of Truth).
+	if request.Status == "BAHAYA" {
+		utils.DeviceStatesMu.RLock()
+		cooldownOK := time.Since(state.LastAlertTime) >= 2*time.Minute
+		utils.DeviceStatesMu.RUnlock()
+
+		if cooldownOK {
+			if err := s.Repo.InsertAlert(request.DeviceID, "BAHAYA"); err != nil {
+				log.Printf("[Alert] Gagal insert alert BAHAYA: %v", err)
+			}
+
+			alertWsMsg := entities.WebsocketMessage{
+				Type: "alert",
+				Data: map[string]interface{}{
+					"alert":     "BAHAYA",
+					"payload":   request,
+					"timestamp": time.Now().Unix(),
+				},
+			}
+			s.Broadcast(alertWsMsg)
+
+			go s.sendFCMAlert(request.DeviceID, "BAHAYA")
+
+			utils.DeviceStatesMu.Lock()
+			state.LastAlertTime = time.Now()
+			utils.DeviceStatesMu.Unlock()
+
+			// Persist last alert time to Firestore for cross-restart durability.
+			go func(deviceID string) {
+				ctx := context.Background()
+				_, _ = s.Firebase.Firestore.Collection("devices").Doc(deviceID).Set(ctx,
+					map[string]interface{}{"last_alert_time": time.Now()},
+					firestore.MergeAll,
+				)
+			}(request.DeviceID)
 		}
 	}
 
-	// CASE B: Terjadi Trigger Kondisi Bahaya (HIGH_WATER atau BLOCKAGE)
-	if triggered {
-		// 1. Catat kejadian alert ke database repository (InfluxDB/Log)
+	// 4b. FCM trigger: CEP detects BLOCKAGE (BE-side, not covered by IoT status).
+	if alertType, triggered := core.ProcessEvent(request.DeviceID, request.WaterDistance, request.RainDetected); triggered {
 		if err := s.Repo.InsertAlert(request.DeviceID, string(alertType)); err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+			log.Printf("[Alert] Gagal insert alert %s: %v", alertType, err)
 		}
 
-		// 2. Kirim alert instan via Websocket ke Dashboard Web UI yang sedang stand-by
-		msg := entities.WebsocketMessage{
+		blockageWsMsg := entities.WebsocketMessage{
 			Type: "alert",
 			Data: map[string]interface{}{
 				"alert":     string(alertType),
@@ -70,74 +129,63 @@ func (s *Service) ProcessSensorData(request requests.SensorDataRequest) *fiber.E
 				"timestamp": time.Now().Unix(),
 			},
 		}
-		s.Broadcast(msg)
+		s.Broadcast(blockageWsMsg)
 
-		// 3. PUSH NOTIFICATION VIA FIRESTORE & FCM MULTICAST (ASYNC)
-		go func(ctx context.Context, deviceID string, aType utils.AlertType) {
-			// Query dokumen alat IoT dari koleksi "devices" di Firestore
-			dsnap, err := s.Firebase.Firestore.Collection("devices").Doc(deviceID).Get(ctx)
-			if err != nil {
-				log.Printf("[FCM] Gagal mengambil data dokumen dari Firestore: %v", err)
-				return
-			}
+		go s.sendFCMAlert(request.DeviceID, string(alertType))
 
-			if !dsnap.Exists() {
-				log.Printf("[FCM] Dokumen device %s tidak ditemukan di Firestore, skip notifikasi.", deviceID)
-				return
-			}
-
-			// Unmarshal data sub-koleksi map mobile_devices
-			var deviceDoc FirestoreDeviceDoc
-			if err := dsnap.DataTo(&deviceDoc); err != nil {
-				log.Printf("[FCM] Gagal unmarshal data Firestore: %v", err)
-				return
-			}
-
-			// Ekstrak seluruh token HP yang terdaftar untuk dikirim bersamaan
-			var tokens []string
-			for _, mobile := range deviceDoc.MobileDevices {
-				if mobile.FCMToken != "" {
-					tokens = append(tokens, mobile.FCMToken)
-				}
-			}
-
-			// Jika ada HP yang terhubung, tembak menggunakan Multicast (1x hit API Firebase)
-			if len(tokens) > 0 {
-				multicastMessage := &messaging.MulticastMessage{
-					Tokens: tokens,
-					Notification: &messaging.Notification{
-						Title: "⚠️ Peringatan Sistem Drainase!",
-						Body:  fmt.Sprintf("Alat %s mendeteksi indikasi bahaya: %s", deviceID, string(aType)),
-					},
-					Data: map[string]string{
-						"device_id":  deviceID,
-						"alert_type": string(aType),
-					},
-				}
-
-				if s.Firebase.FCM != nil {
-					br, sendErr := s.Firebase.FCM.SendEachForMulticast(ctx, multicastMessage)
-					if sendErr != nil {
-						log.Printf("[FCM] Gagal mengirim Multicast Notifikasi: %v", sendErr)
-					} else {
-						log.Printf("[FCM] Notifikasi Sukses dikirim ke %d HP (Gagal: %d)", br.SuccessCount, br.FailureCount)
-					}
-				}
-			}
-		}(context.Background(), request.DeviceID, alertType)
-
-		// 4. Update LastAlertTime di RAM utilitas lokal agar cooldown 2 menit berjalan
-		utils.DeviceStates[request.DeviceID].LastAlertTime = time.Now()
-
-		// 5. Cadangkan juga data LastAlertTime ke Firestore secara async agar persisten
-		go func(ctx context.Context, deviceID string) {
-			_, _ = s.Firebase.Firestore.Collection("devices").Doc(deviceID).Set(ctx, map[string]interface{}{
-				"last_alert_time": time.Now(),
-			}, firestore.MergeAll)
-		}(context.Background(), request.DeviceID)
+		utils.DeviceStatesMu.Lock()
+		state.LastAlertTime = time.Now()
+		utils.DeviceStatesMu.Unlock()
 	}
 
 	return nil
+}
+
+// sendFCMAlert fetches FCM tokens from Firestore and sends a multicast push notification.
+func (s *Service) sendFCMAlert(deviceID, alertType string) {
+	ctx := context.Background()
+
+	dsnap, err := s.Firebase.Firestore.Collection("devices").Doc(deviceID).Get(ctx)
+	if err != nil || !dsnap.Exists() {
+		log.Printf("[FCM] Dokumen device %s tidak ditemukan, skip notifikasi.", deviceID)
+		return
+	}
+
+	var deviceDoc FirestoreDeviceDoc
+	if err := dsnap.DataTo(&deviceDoc); err != nil {
+		log.Printf("[FCM] Gagal unmarshal data Firestore: %v", err)
+		return
+	}
+
+	var tokens []string
+	for _, mobile := range deviceDoc.MobileDevices {
+		if mobile.FCMToken != "" {
+			tokens = append(tokens, mobile.FCMToken)
+		}
+	}
+
+	if len(tokens) == 0 || s.Firebase.FCM == nil {
+		return
+	}
+
+	multicastMessage := &messaging.MulticastMessage{
+		Tokens: tokens,
+		Notification: &messaging.Notification{
+			Title: "⚠️ Peringatan Sistem Drainase!",
+			Body:  fmt.Sprintf("Alat %s mendeteksi indikasi bahaya: %s", deviceID, alertType),
+		},
+		Data: map[string]string{
+			"device_id":  deviceID,
+			"alert_type": alertType,
+		},
+	}
+
+	br, sendErr := s.Firebase.FCM.SendEachForMulticast(ctx, multicastMessage)
+	if sendErr != nil {
+		log.Printf("[FCM] Gagal mengirim multicast: %v", sendErr)
+	} else {
+		log.Printf("[FCM] Notifikasi dikirim ke %d HP (Gagal: %d)", br.SuccessCount, br.FailureCount)
+	}
 }
 
 func (s *Service) GetSensorHistory(deviceID, startDate, endDate string) ([]entities.SensorHistory, *fiber.Error) {
@@ -146,16 +194,20 @@ func (s *Service) GetSensorHistory(deviceID, startDate, endDate string) ([]entit
 		return nil, fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 	defer result.Close()
+
 	var sensorData []entities.SensorHistory
 	for result.Next() {
 		record := result.Record()
-		sensorHistory := entities.SensorHistory{
+		sensorData = append(sensorData, entities.SensorHistory{
 			Time:          record.Time(),
-			WaterDistance: record.ValueByKey("water_distance").(float64),
-			RainDetected:  record.ValueByKey("rain_detected").(bool),
-			RainIntensity: record.ValueByKey("rain_intensity").(float64),
-		}
-		sensorData = append(sensorData, sensorHistory)
+			DeviceID:      utils.SafeString(record.ValueByKey("device_id")),
+			WaterDistance: utils.SafeFloat64(record.ValueByKey("water_distance")),
+			WaterLevelCm:  utils.SafeFloat64(record.ValueByKey("water_level_cm")),
+			Status:        utils.SafeString(record.ValueByKey("status")),
+			RainDetected:  utils.SafeBool(record.ValueByKey("rain_detected")),
+			SensorFlag:    utils.SafeString(record.ValueByKey("sensor_flag")),
+			NextWakeupSec: utils.SafeInt64(record.ValueByKey("next_wakeup_sec")),
+		})
 	}
 	return sensorData, nil
 }
@@ -166,16 +218,20 @@ func (s *Service) GetLatestSensorData(deviceID string) ([]entities.SensorHistory
 		return nil, fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 	defer result.Close()
+
 	var sensorData []entities.SensorHistory
 	for result.Next() {
 		record := result.Record()
-		sensorHistory := entities.SensorHistory{
+		sensorData = append(sensorData, entities.SensorHistory{
 			Time:          record.Time(),
-			WaterDistance: record.ValueByKey("water_distance").(float64),
-			RainDetected:  record.ValueByKey("rain_detected").(bool),
-			RainIntensity: record.ValueByKey("rain_intensity").(float64),
-		}
-		sensorData = append(sensorData, sensorHistory)
+			DeviceID:      utils.SafeString(record.ValueByKey("device_id")),
+			WaterDistance: utils.SafeFloat64(record.ValueByKey("water_distance")),
+			WaterLevelCm:  utils.SafeFloat64(record.ValueByKey("water_level_cm")),
+			Status:        utils.SafeString(record.ValueByKey("status")),
+			RainDetected:  utils.SafeBool(record.ValueByKey("rain_detected")),
+			SensorFlag:    utils.SafeString(record.ValueByKey("sensor_flag")),
+			NextWakeupSec: utils.SafeInt64(record.ValueByKey("next_wakeup_sec")),
+		})
 	}
 	return sensorData, nil
 }

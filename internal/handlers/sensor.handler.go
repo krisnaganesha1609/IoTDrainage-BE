@@ -10,24 +10,30 @@ import (
 	"github.com/krisnaganesha1609/IoTDrainage-BE/utils"
 )
 
-func (h *Handler) ReceiveSensorFromMQTT(client *utils.MQTTClient, config *utils.MQTTConfig) error {
-	var payload requests.SensorDataRequest
+// ReceiveSensorFromMQTT subscribes to the sensor-data topic and processes
+// each incoming message inside the MQTT callback.
+//
+// BUG FIX: The original code called ProcessSensorData() once immediately
+// after Subscribe() — outside the callback — with an empty payload struct.
+// This is now correctly placed inside the message callback so it runs on
+// every received message.
+func (h *Handler) ReceiveSensorFromMQTT(client *utils.MQTTClient, config *utils.MQTTConfig) {
+	topic := config.TopicSensorData()
+	log.Infof("[MQTT] Subscribing to sensor-data: %s", topic)
 
-	client.Client.Subscribe(config.Topic, 1, func(client mqtt.Client, msg mqtt.Message) {
+	client.Client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+		var payload requests.SensorDataRequest
 		if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
-			log.Error("Failed to unmarshal sensor data: %v", err)
+			log.Errorf("[MQTT] Gagal unmarshal sensor-data: %v", err)
 			return
 		}
-		log.Infof("Received sensor data: %v", payload)
+		log.Infof("[MQTT] sensor-data diterima dari %s | status=%s | level=%.1f cm",
+			payload.DeviceID, payload.Status, payload.WaterLevelCm)
+
+		if err := h.Service.ProcessSensorData(payload); err != nil {
+			log.Errorf("[MQTT] Gagal proses sensor-data: %v", err)
+		}
 	})
-
-	err := h.Service.ProcessSensorData(payload)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (h *Handler) GetSensorHistory(c fiber.Ctx) error {

@@ -1,6 +1,9 @@
 package utils
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 type AlertType string
 
@@ -11,11 +14,29 @@ const (
 )
 
 type DeviceState struct {
-	LastAlertTime  time.Time         // Tetap simpan di RAM untuk bypass cepat di engine
-	LastDistances  []float64         // Untuk deteksi tren blockage
-	LastTimesSlice []time.Time       // Untuk tracking waktu slice tren
-	LastTimes      map[int]time.Time // Bawaan dari kode awal Websocket-mu
+	LastAlertTime  time.Time   // Cooldown tracker (in-RAM)
+	LastDistances  []float64   // For blockage trend detection
+	LastTimesSlice []time.Time // Time tracking for trend slice
+	LastTimes      map[int]time.Time
 }
 
-// Global state di RAM
+// DeviceStatesMu protects DeviceStates from concurrent read/write
+// (MQTT goroutine writes, HTTP handlers read).
+var DeviceStatesMu sync.RWMutex
 var DeviceStates = make(map[string]*DeviceState)
+
+// GetOrCreateDeviceState safely returns the state for a device,
+// creating it if it does not exist yet.
+func GetOrCreateDeviceState(deviceID string) *DeviceState {
+	DeviceStatesMu.Lock()
+	defer DeviceStatesMu.Unlock()
+
+	state, exists := DeviceStates[deviceID]
+	if !exists {
+		state = &DeviceState{
+			LastTimes: make(map[int]time.Time),
+		}
+		DeviceStates[deviceID] = state
+	}
+	return state
+}

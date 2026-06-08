@@ -3,7 +3,7 @@
     "info": {
         "title": "Drainage Monitoring IoT API",
         "version": "1.0.0",
-        "description": "API untuk monitoring drainase berbasis IoT dengan InfluxDB, Firestore, dan alert system."
+        "description": "API untuk monitoring drainase berbasis IoT dengan InfluxDB, Firestore, Cloudinary, WebSocket, dan alert system."
     },
     "servers": [
         {
@@ -14,6 +14,59 @@
         }
     ],
     "paths": {
+        "/ws": {
+            "get": {
+                "summary": "WebSocket upgrade endpoint untuk streaming data sensor realtime",
+                "description": "Gunakan endpoint ini untuk membuka koneksi WebSocket. Server akan mem-broadcast pesan bertipe `sensor` dan `alert`.",
+                "responses": {
+                    "101": {
+                        "description": "WebSocket connection established"
+                    },
+                    "426": {
+                        "description": "Upgrade required"
+                    }
+                }
+            }
+        },
+        "/logs": {
+            "get": {
+                "summary": "Tampilkan halaman HTML log sistem 7 hari terakhir",
+                "description": "Server-rendered page untuk melihat log perangkat. Dapat difilter dengan query `?device_id=<id>`.",
+                "parameters": [
+                    {
+                        "name": "device_id",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "Filter log berdasarkan device_id"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML page berhasil dirender",
+                        "content": {
+                            "text/html": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Gagal render halaman log",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/health": {
             "get": {
                 "summary": "Health check backend API",
@@ -50,17 +103,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "status": {
-                                            "type": "string",
-                                            "example": "error"
-                                        },
-                                        "message": {
-                                            "type": "string",
-                                            "example": "Belum ada data gambar yang tersimpan"
-                                        }
-                                    }
+                                    "$ref": "#/components/schemas/ErrorResponse"
                                 }
                             }
                         }
@@ -68,7 +111,7 @@
                 }
             },
             "post": {
-                "summary": "Upload image dari ESP32-CAM ke Cloudinary & simpan metadata ke Firestore",
+                "summary": "Upload image dari ESP32-CAM ke Cloudinary dan simpan metadata ke Firestore",
                 "requestBody": {
                     "required": true,
                     "content": {
@@ -96,26 +139,81 @@
                     }
                 },
                 "responses": {
-                    "200": {
+                    "201": {
                         "description": "Upload dan simpan metadata Firestore sukses",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "status": {
-                                            "type": "string",
-                                            "example": "success"
-                                        },
-                                        "message": {
-                                            "type": "string",
-                                            "example": "Operation successful"
-                                        },
-                                        "data": {
-                                            "type": "string",
-                                            "example": "https://res.cloudinary.com/demo/image/upload/v1234/drainage.jpg"
-                                        }
+                                    "$ref": "#/components/schemas/ImageUploadResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Request tidak valid",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/devices/{device_id}/snapshot": {
+            "post": {
+                "summary": "Upload snapshot terjadwal per device",
+                "description": "Endpoint untuk snapshot harian. `device_id` diambil dari URL path, sedangkan file gambar dikirim sebagai multipart form field `image`.",
+                "parameters": [
+                    {
+                        "name": "device_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        },
+                        "description": "ID device IoT"
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "image": {
+                                        "type": "string",
+                                        "format": "binary",
+                                        "description": "File biner snapshot dari kamera sensor"
                                     }
+                                },
+                                "required": [
+                                    "image"
+                                ]
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Snapshot berhasil disimpan",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ImageUploadResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Request tidak valid",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
                                 }
                             }
                         }
@@ -142,7 +240,8 @@
                         "schema": {
                             "type": "string",
                             "format": "date-time"
-                        }
+                        },
+                        "description": "Waktu awal dalam format RFC3339 / ISO-8601"
                     },
                     {
                         "name": "end_date",
@@ -151,7 +250,8 @@
                         "schema": {
                             "type": "string",
                             "format": "date-time"
-                        }
+                        },
+                        "description": "Waktu akhir dalam format RFC3339 / ISO-8601"
                     }
                 ],
                 "responses": {
@@ -234,13 +334,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "error": {
-                                            "type": "string",
-                                            "example": "device_id, app_instance_id, dan token wajib diisi"
-                                        }
-                                    }
+                                    "$ref": "#/components/schemas/ValidationErrorResponse"
                                 }
                             }
                         }
@@ -251,90 +345,54 @@
     },
     "components": {
         "schemas": {
-            "RegisterTokenRequest": {
-                "type": "object",
-                "required": [
-                    "device_id",
-                    "app_instance_id",
-                    "token"
-                ],
-                "properties": {
-                    "device_id": {
-                        "type": "string",
-                        "example": "dev01",
-                        "description": "ID unit IoT drainase yang dipantau"
-                    },
-                    "app_instance_id": {
-                        "type": "string",
-                        "example": "iphone_krisna_123",
-                        "description": "ID Unik perangkat HP pemantau"
-                    },
-                    "token": {
-                        "type": "string",
-                        "example": "fcm_token_firebase_abc123xyz...",
-                        "description": "FCM Token asli dari client-side mobile app"
-                    }
-                }
-            },
-            "SensorHistory": {
-                "type": "object",
-                "properties": {
-                    "timestamp": {
-                        "type": "string",
-                        "format": "date-time"
-                    },
-                    "water_distance": {
-                        "type": "number"
-                    },
-                    "rain_detected": {
-                        "type": "boolean"
-                    },
-                    "rain_intensity": {
-                        "type": "number"
-                    }
-                }
-            },
-            "SensorHistoryResponse": {
+            "ErrorResponse": {
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
-                        "example": "success"
+                        "example": "error"
                     },
                     "message": {
                         "type": "string",
-                        "example": "Success operation"
+                        "example": "Something went wrong"
                     },
-                    "data": {
-                        "type": "array",
-                        "items": {
-                            "$ref": "#/components/schemas/SensorHistory"
-                        }
-                    }
-                }
-            },
-            "LatestImageResponse": {
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "example": "success"
-                    },
-                    "message": {
-                        "type": "string",
-                        "example": "Success get latest image metadata"
-                    },
-                    "data": {
-                        "type": "object",
-                        "properties": {
-                            "url": {
-                                "type": "string",
-                                "example": "https://res.cloudinary.com/demo/image/upload/v1234/drainage.jpg"
+                    "error": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": "string"
+                                }
                             },
-                            "last_updated": {
-                                "type": "integer",
-                                "example": 1698240000
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
                             }
+                        ]
+                    }
+                }
+            },
+            "ValidationErrorResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "error"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Validation error"
+                    },
+                    "error": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string"
+                        },
+                        "example": {
+                            "start_date": "required",
+                            "end_date": "invalid format"
                         }
                     }
                 }
@@ -366,7 +424,7 @@
                     },
                     "message": {
                         "type": "string",
-                        "example": "Operation successful"
+                        "example": "Token registered successfully"
                     },
                     "data": {
                         "type": "object",
@@ -375,26 +433,133 @@
                     }
                 }
             },
-            "ValidationErrorResponse": {
+            "ImageUploadResponse": {
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
-                        "example": "error"
+                        "example": "created"
                     },
                     "message": {
                         "type": "string",
-                        "example": "Validation error"
+                        "example": "Flood image uploaded successfully"
                     },
-                    "error": {
+                    "data": {
                         "type": "object",
-                        "additionalProperties": {
-                            "type": "string"
-                        },
-                        "example": {
-                            "start_date": "required",
-                            "end_date": "invalid format"
+                        "properties": {
+                            "secure_url": {
+                                "type": "string",
+                                "example": "https://res.cloudinary.com/demo/image/upload/v1234/drainage.jpg"
+                            }
                         }
+                    }
+                }
+            },
+            "LatestImageResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "success"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Latest image retrieved successfully"
+                    },
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "example": "https://res.cloudinary.com/demo/image/upload/v1234/drainage.jpg"
+                            },
+                            "last_updated": {
+                                "type": "integer",
+                                "example": 1698240000
+                            }
+                        }
+                    }
+                }
+            },
+            "SensorHistory": {
+                "type": "object",
+                "properties": {
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "device_id": {
+                        "type": "string",
+                        "example": "dev01"
+                    },
+                    "water_distance": {
+                        "type": "number",
+                        "example": 14.2
+                    },
+                    "water_level_cm": {
+                        "type": "number",
+                        "example": 35.8
+                    },
+                    "status": {
+                        "type": "string",
+                        "example": "NORMAL",
+                        "description": "Status hasil keputusan device: NORMAL/WASPADA/BAHAYA"
+                    },
+                    "rain_detected": {
+                        "type": "boolean",
+                        "example": true
+                    },
+                    "sensor_flag": {
+                        "type": "string",
+                        "example": "OK"
+                    },
+                    "next_wakeup_sec": {
+                        "type": "integer",
+                        "example": 60
+                    }
+                }
+            },
+            "SensorHistoryResponse": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "example": "success"
+                    },
+                    "message": {
+                        "type": "string",
+                        "example": "Sensor history fetched successfully"
+                    },
+                    "data": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SensorHistory"
+                        }
+                    }
+                }
+            },
+            "RegisterTokenRequest": {
+                "type": "object",
+                "required": [
+                    "device_id",
+                    "app_instance_id",
+                    "fcm_token"
+                ],
+                "properties": {
+                    "device_id": {
+                        "type": "string",
+                        "example": "dev01",
+                        "description": "ID unit IoT drainase yang dipantau"
+                    },
+                    "app_instance_id": {
+                        "type": "string",
+                        "example": "iphone_krisna_123",
+                        "description": "ID unik perangkat HP pemantau"
+                    },
+                    "fcm_token": {
+                        "type": "string",
+                        "example": "fcm_token_firebase_abc123xyz...",
+                        "description": "FCM token asli dari client-side mobile app"
                     }
                 }
             }

@@ -8,14 +8,14 @@ import (
 )
 
 type Config struct {
-	PORT           string `env:"PORT"`
-	INFLUX_URL     string `env:"INFLUX_URL"`
-	INFLUX_TOKEN   string `env:"INFLUX_TOKEN"`
-	INFLUX_ORG     string `env:"INFLUX_ORG"`
-	INFLUX_BUCKET  string `env:"INFLUX_BUCKET"`
-	CLOUDINARY_URL string `env:"CLOUDINARY_URL"`
-	MQTT_BROKER    string `env:"MQTT_BROKER"`
-	MQTT_TOPIC     string `env:"MQTT_TOPIC"`
+	PORT            string `env:"PORT"`
+	INFLUX_URL      string `env:"INFLUX_URL"`
+	INFLUX_TOKEN    string `env:"INFLUX_TOKEN"`
+	INFLUX_ORG      string `env:"INFLUX_ORG"`
+	INFLUX_BUCKET   string `env:"INFLUX_BUCKET"`
+	CLOUDINARY_URL  string `env:"CLOUDINARY_URL"`
+	MQTT_BROKER     string `env:"MQTT_BROKER"`
+	MQTT_BASE_TOPIC string `env:"MQTT_BASE_TOPIC"`
 }
 
 func InitConfig() (*Config, error) {
@@ -24,14 +24,14 @@ func InitConfig() (*Config, error) {
 		log.Println("No .env file found, relying on environment variables")
 	}
 	config := &Config{
-		PORT:           LoadEnv("PORT", "8080"),
-		INFLUX_URL:     LoadEnv("INFLUX_URL", ""),
-		INFLUX_TOKEN:   LoadEnv("INFLUX_TOKEN", ""),
-		INFLUX_ORG:     LoadEnv("INFLUX_ORG", ""),
-		INFLUX_BUCKET:  LoadEnv("INFLUX_BUCKET", ""),
-		CLOUDINARY_URL: LoadEnv("CLOUDINARY_URL", ""),
-		MQTT_BROKER:    LoadEnv("MQTT_BROKER", ""),
-		MQTT_TOPIC:     LoadEnv("MQTT_TOPIC", ""),
+		PORT:            LoadEnv("PORT", "8080"),
+		INFLUX_URL:      LoadEnv("INFLUX_URL", ""),
+		INFLUX_TOKEN:    LoadEnv("INFLUX_TOKEN", ""),
+		INFLUX_ORG:      LoadEnv("INFLUX_ORG", ""),
+		INFLUX_BUCKET:   LoadEnv("INFLUX_BUCKET", ""),
+		CLOUDINARY_URL:  LoadEnv("CLOUDINARY_URL", ""),
+		MQTT_BROKER:     LoadEnv("MQTT_BROKER", ""),
+		MQTT_BASE_TOPIC: LoadEnv("MQTT_BASE_TOPIC", ""),
 	}
 	return config, nil
 }
