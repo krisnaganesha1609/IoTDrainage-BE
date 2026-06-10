@@ -79,40 +79,40 @@ func (s *Service) ProcessSensorData(request requests.SensorDataRequest) *fiber.E
 
 	// 4a. FCM trigger: IoT reports BAHAYA status (Source of Truth).
 	if request.Status == "BAHAYA" {
-		utils.DeviceStatesMu.RLock()
-		cooldownOK := time.Since(state.LastAlertTime) >= 2*time.Minute
-		utils.DeviceStatesMu.RUnlock()
+		// utils.DeviceStatesMu.RLock()
+		// cooldownOK := time.Since(state.LastAlertTime) >= 2*time.Minute
+		// utils.DeviceStatesMu.RUnlock()
 
-		if cooldownOK {
-			if err := s.Repo.InsertAlert(request.DeviceID, "BAHAYA"); err != nil {
-				log.Printf("[Alert] Gagal insert alert BAHAYA: %v", err)
-			}
-
-			alertWsMsg := entities.WebsocketMessage{
-				Type: "alert",
-				Data: map[string]interface{}{
-					"alert":     "BAHAYA",
-					"payload":   request,
-					"timestamp": time.Now().Unix(),
-				},
-			}
-			s.Broadcast(alertWsMsg)
-
-			go s.sendFCMAlert(request.DeviceID, "BAHAYA", request)
-
-			utils.DeviceStatesMu.Lock()
-			state.LastAlertTime = time.Now()
-			utils.DeviceStatesMu.Unlock()
-
-			// Persist last alert time to Firestore for cross-restart durability.
-			go func(deviceID string) {
-				ctx := context.Background()
-				_, _ = s.Firebase.Firestore.Collection("devices").Doc(deviceID).Set(ctx,
-					map[string]interface{}{"last_alert_time": time.Now()},
-					firestore.MergeAll,
-				)
-			}(request.DeviceID)
+		// if cooldownOK {
+		if err := s.Repo.InsertAlert(request.DeviceID, "BAHAYA"); err != nil {
+			log.Printf("[Alert] Gagal insert alert BAHAYA: %v", err)
 		}
+
+		alertWsMsg := entities.WebsocketMessage{
+			Type: "alert",
+			Data: map[string]interface{}{
+				"alert":     "BAHAYA",
+				"payload":   request,
+				"timestamp": time.Now().Unix(),
+			},
+		}
+		s.Broadcast(alertWsMsg)
+
+		go s.sendFCMAlert(request.DeviceID, "BAHAYA", request)
+
+		utils.DeviceStatesMu.Lock()
+		state.LastAlertTime = time.Now()
+		utils.DeviceStatesMu.Unlock()
+
+		// Persist last alert time to Firestore for cross-restart durability.
+		go func(deviceID string) {
+			ctx := context.Background()
+			_, _ = s.Firebase.Firestore.Collection("devices").Doc(deviceID).Set(ctx,
+				map[string]interface{}{"last_alert_time": time.Now()},
+				firestore.MergeAll,
+			)
+		}(request.DeviceID)
+		// }
 	}
 
 	// 4b. FCM trigger: CEP detects BLOCKAGE (BE-side, not covered by IoT status).
