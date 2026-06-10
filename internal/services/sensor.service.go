@@ -98,7 +98,7 @@ func (s *Service) ProcessSensorData(request requests.SensorDataRequest) *fiber.E
 			}
 			s.Broadcast(alertWsMsg)
 
-			go s.sendFCMAlert(request.DeviceID, "BAHAYA")
+			go s.sendFCMAlert(request.DeviceID, "BAHAYA", request)
 
 			utils.DeviceStatesMu.Lock()
 			state.LastAlertTime = time.Now()
@@ -131,7 +131,7 @@ func (s *Service) ProcessSensorData(request requests.SensorDataRequest) *fiber.E
 		}
 		s.Broadcast(blockageWsMsg)
 
-		go s.sendFCMAlert(request.DeviceID, string(alertType))
+		go s.sendFCMAlert(request.DeviceID, string(alertType), request)
 
 		utils.DeviceStatesMu.Lock()
 		state.LastAlertTime = time.Now()
@@ -142,7 +142,7 @@ func (s *Service) ProcessSensorData(request requests.SensorDataRequest) *fiber.E
 }
 
 // sendFCMAlert fetches FCM tokens from Firestore and sends a multicast push notification.
-func (s *Service) sendFCMAlert(deviceID, alertType string) {
+func (s *Service) sendFCMAlert(deviceID, alertType string, request requests.SensorDataRequest) {
 	ctx := context.Background()
 
 	dsnap, err := s.Firebase.Firestore.Collection("devices").Doc(deviceID).Get(ctx)
@@ -168,16 +168,55 @@ func (s *Service) sendFCMAlert(deviceID, alertType string) {
 		return
 	}
 
+	var title string
+	var body string
+
+	switch request.Status {
+	case "NORMAL":
+		title = "✅ Status Drainase: Normal"
+		body = fmt.Sprintf(
+			"%s: tinggi air %.1f cm. Sistem beroperasi normal.",
+			deviceID,
+			request.WaterLevelCm,
+		)
+
+	case "WASPADA":
+		title = "⚠️ Status Drainase: Waspada"
+		body = fmt.Sprintf(
+			"%s: tinggi air %.1f cm. Terjadi kenaikan muka air, pemantauan disarankan.",
+			deviceID,
+			request.WaterLevelCm,
+		)
+
+	case "BAHAYA":
+		title = "🚨 Status Drainase: Bahaya"
+		body = fmt.Sprintf(
+			"%s: tinggi air %.1f cm. Tinggi air mencapai batas kritis, waspada potensi banjir!",
+			deviceID,
+			request.WaterLevelCm,
+		)
+
+	default:
+		title = fmt.Sprintf("📡 Update Sensor Drainase: %s", alertType)
+		body = fmt.Sprintf(
+			"%s: tinggi air %.1f cm. Status: %s.",
+			deviceID,
+			request.WaterLevelCm,
+			request.Status,
+		)
+	}
+
 	multicastMessage := &messaging.MulticastMessage{
 		Tokens: tokens,
 		Notification: &messaging.Notification{
-			Title: "⚠️ Peringatan Sistem Drainase!",
-			Body:  fmt.Sprintf("Alat %s mendeteksi indikasi bahaya: %s", deviceID, alertType),
+			Title: title,
+			Body:  body,
 		},
 		Data: map[string]string{
 			"device_id":  deviceID,
 			"alert_type": alertType,
 		},
+		Android: &messaging.AndroidConfig{Priority: "high"},
 	}
 
 	br, sendErr := s.Firebase.FCM.SendEachForMulticast(ctx, multicastMessage)
