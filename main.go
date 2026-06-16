@@ -48,15 +48,6 @@ func init() {
 	}
 	cloudinary = cld
 
-	// MQTT — now driven by MQTT_BASE_TOPIC; three sub-topics are derived automatically.
-	mqttcnf := utils.LoadMQTTConfig(config.MQTT_BROKER, config.MQTT_BASE_TOPIC)
-	mqttConfig = mqttcnf
-	mqttcl, err := mqttConfig.InitMQTT()
-	if err != nil {
-		log.Fatalf("%s", "Failed to initialize MQTT: "+err.Error())
-	}
-	mqttClient = mqttcl
-
 	firebase := utils.InitFirebase()
 
 	// Pass INFLUX_BUCKET so Flux queries don't hardcode the bucket name.
@@ -64,14 +55,30 @@ func init() {
 	service = services.InitializeService(repo, firebase)
 	handler = handlers.InitializeHandler(service)
 	route = routes.InitializeRoutes(handler)
+
+	// MQTT — driven by MQTT_BASE_TOPIC; three sub-topics are derived automatically.
+	//
+	// NOTE: handler must exist BEFORE InitMQTT is called, because
+	// handler.SubscribeAllMQTT(...) is passed in as the OnConnectHandler —
+	// it needs to be ready to fire the very first time the client connects,
+	// and again on every reconnect after that (see utils/mqtt.go comments
+	// for why this matters: without it, subscriptions silently vanish after
+	// any network blip and the backend stops receiving data with no log
+	// trace at all).
+	mqttcnf := utils.LoadMQTTConfig(config.MQTT_BROKER, config.MQTT_BASE_TOPIC)
+	mqttConfig = mqttcnf
+	mqttcl, err := mqttConfig.InitMQTT(handler.SubscribeAllMQTT(mqttConfig))
+	if err != nil {
+		log.Fatalf("%s", "Failed to initialize MQTT: "+err.Error())
+	}
+	mqttClient = mqttcl
 }
 
 func main() {
-	// ── MQTT Subscribers ────────────────────────────────────────────────────
-	// Each runs in its own goroutine; they are pure subscribers (no publish).
-	go route.Handler.ReceiveSensorFromMQTT(mqttClient, mqttConfig)
-	go route.Handler.ReceiveSensorLogFromMQTT(mqttClient, mqttConfig)
-	go route.Handler.ReceiveDeviceInfoFromMQTT(mqttClient, mqttConfig)
+	// NOTE: MQTT subscriptions are no longer started here manually.
+	// They are wired as the OnConnectHandler inside mqttConfig.InitMQTT()
+	// during init(), so they fire on the initial connect AND every
+	// reconnect automatically (see handler.SubscribeAllMQTT).
 
 	// ── Watchdog Cron ────────────────────────────────────────────────────────
 	// Runs every minute; marks devices OFFLINE when they miss their wakeup window.

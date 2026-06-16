@@ -11,11 +11,12 @@ import (
 
 // ReceiveSensorLogFromMQTT subscribes to the sensor-log topic and stores
 // each log entry in InfluxDB for the 7-day audit trail.
-func (h *Handler) ReceiveSensorLogFromMQTT(client *utils.MQTTClient, config *utils.MQTTConfig) {
+//
+// Called from inside OnConnectHandler — re-subscribes on every (re)connect.
+func (h *Handler) ReceiveSensorLogFromMQTT(client mqtt.Client, config *utils.MQTTConfig) {
 	topic := config.TopicSensorLog()
-	log.Infof("[MQTT] Subscribing to sensor-log: %s", topic)
 
-	client.Client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+	token := client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
 		var payload requests.SensorLogRequest
 		if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
 			log.Errorf("[MQTT] Gagal unmarshal sensor-log: %v", err)
@@ -27,4 +28,11 @@ func (h *Handler) ReceiveSensorLogFromMQTT(client *utils.MQTTClient, config *uti
 			log.Errorf("[MQTT] Gagal proses sensor-log: %v", err)
 		}
 	})
+
+	token.Wait()
+	if token.Error() != nil {
+		log.Errorf("[MQTT] Gagal subscribe ke %s: %v", topic, token.Error())
+		return
+	}
+	log.Infof("[MQTT] Subscribed ke sensor-log: %s", topic)
 }

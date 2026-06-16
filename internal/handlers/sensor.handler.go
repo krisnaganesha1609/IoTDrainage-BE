@@ -13,15 +13,13 @@ import (
 // ReceiveSensorFromMQTT subscribes to the sensor-data topic and processes
 // each incoming message inside the MQTT callback.
 //
-// BUG FIX: The original code called ProcessSensorData() once immediately
-// after Subscribe() — outside the callback — with an empty payload struct.
-// This is now correctly placed inside the message callback so it runs on
-// every received message.
-func (h *Handler) ReceiveSensorFromMQTT(client *utils.MQTTClient, config *utils.MQTTConfig) {
+// IMPORTANT: this is called from inside OnConnectHandler (see mqtt.go /
+// SubscribeAllMQTT), so it re-subscribes on every connect AND every
+// reconnect — not just once at startup.
+func (h *Handler) ReceiveSensorFromMQTT(client mqtt.Client, config *utils.MQTTConfig) {
 	topic := config.TopicSensorData()
-	log.Infof("[MQTT] Subscribing to sensor-data: %s", topic)
 
-	client.Client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+	token := client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
 		var payload requests.SensorDataRequest
 		if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
 			log.Errorf("[MQTT] Gagal unmarshal sensor-data: %v", err)
@@ -34,6 +32,13 @@ func (h *Handler) ReceiveSensorFromMQTT(client *utils.MQTTClient, config *utils.
 			log.Errorf("[MQTT] Gagal proses sensor-data: %v", err)
 		}
 	})
+
+	token.Wait()
+	if token.Error() != nil {
+		log.Errorf("[MQTT] Gagal subscribe ke %s: %v", topic, token.Error())
+		return
+	}
+	log.Infof("[MQTT] Subscribed ke sensor-data: %s", topic)
 }
 
 func (h *Handler) GetSensorHistory(c fiber.Ctx) error {

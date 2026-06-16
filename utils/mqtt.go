@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"log"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -37,12 +38,37 @@ type MQTTClient struct {
 	Client mqtt.Client
 }
 
-func (config *MQTTConfig) InitMQTT() (*MQTTClient, error) {
+// InitMQTT connects to the broker and wires onConnect so that ALL topic
+// subscriptions are (re)established every single time a connection is made —
+// both on the initial connect AND on every reconnect.
+//
+// BUG FIX (silent data loss after reconnect):
+//
+//	SetAutoReconnect(true) only restores the underlying TCP connection.
+//	It does NOT restore subscriptions, because CleanSession defaults to
+//	true in paho — the broker discards subscription state on disconnect.
+//	Previously, Subscribe() was only called once at startup (in main.go),
+//	so after ANY network blip / broker idle-disconnect over the following
+//	days, the backend would silently stop receiving messages — reconnected
+//	at the transport level, but no longer subscribed to anything, and with
+//	no log output to indicate it, because no ConnectionLostHandler existed.
+//
+// Fix: pass the subscribe-everything logic in as onConnect; it now reruns
+// on every connect event, and we log connection-lost / reconnect attempts
+// so this failure mode is visible in the logs instead of silent.
+func (config *MQTTConfig) InitMQTT(onConnect mqtt.OnConnectHandler) (*MQTTClient, error) {
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(config.Broker) // fixed: only call AddBroker once
+	opts.AddBroker(config.Broker)
 	opts.SetClientID("compro9.26.telyu-iot-drainage-be-subscriber")
 	opts.SetAutoReconnect(true)
 	opts.SetConnectRetry(true)
+	opts.SetOnConnectHandler(onConnect)
+	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+		log.Printf("[MQTT] Koneksi ke broker putus: %v — mencoba auto-reconnect...", err)
+	})
+	opts.SetReconnectingHandler(func(_ mqtt.Client, _ *mqtt.ClientOptions) {
+		log.Println("[MQTT] Reconnecting ke broker...")
+	})
 
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
