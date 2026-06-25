@@ -50,21 +50,15 @@ func init() {
 
 	firebase := utils.InitFirebase()
 
-	// Pass INFLUX_BUCKET so Flux queries don't hardcode the bucket name.
 	repo = repositories.InitializeRepository(influx, cloudinary, firebase, config.INFLUX_BUCKET)
 	service = services.InitializeService(repo, firebase)
+
+	// Step 1: build handler first (needed as OnConnectHandler closure).
 	handler = handlers.InitializeHandler(service)
 	route = routes.InitializeRoutes(handler)
 
-	// MQTT — driven by MQTT_BASE_TOPIC; three sub-topics are derived automatically.
-	//
-	// NOTE: handler must exist BEFORE InitMQTT is called, because
-	// handler.SubscribeAllMQTT(...) is passed in as the OnConnectHandler —
-	// it needs to be ready to fire the very first time the client connects,
-	// and again on every reconnect after that (see utils/mqtt.go comments
-	// for why this matters: without it, subscriptions silently vanish after
-	// any network blip and the backend stops receiving data with no log
-	// trace at all).
+	// Step 2: init MQTT — passes handler.SubscribeAllMQTT as OnConnectHandler
+	// so subscriptions are (re)established on every connect/reconnect.
 	mqttcnf := utils.LoadMQTTConfig(config.MQTT_BROKER, config.MQTT_BASE_TOPIC)
 	mqttConfig = mqttcnf
 	mqttcl, err := mqttConfig.InitMQTT(handler.SubscribeAllMQTT(mqttConfig))
@@ -72,19 +66,16 @@ func init() {
 		log.Fatalf("%s", "Failed to initialize MQTT: "+err.Error())
 	}
 	mqttClient = mqttcl
+
+	// Step 3: inject MQTTClient back into handler so message callbacks
+	// can call MarkMessageReceived() for the connection watchdog.
+	handler.SetMQTTClient(mqttClient)
 }
 
 func main() {
-	// NOTE: MQTT subscriptions are no longer started here manually.
-	// They are wired as the OnConnectHandler inside mqttConfig.InitMQTT()
-	// during init(), so they fire on the initial connect AND every
-	// reconnect automatically (see handler.SubscribeAllMQTT).
-
-	// ── Watchdog Cron ────────────────────────────────────────────────────────
-	// Runs every minute; marks devices OFFLINE when they miss their wakeup window.
+	// Watchdog: marks devices OFFLINE when they miss their wakeup window.
 	go service.RunWatchdog()
 
-	// ── HTTP Server ──────────────────────────────────────────────────────────
 	app := fiber.New(fiber.Config{
 		CaseSensitive:      true,
 		StrictRouting:      true,
@@ -98,7 +89,6 @@ func main() {
 
 	route.Setup(app)
 
-	// Scalar API docs (HTTP)
 	swaggerBytes, err := os.ReadFile("./docs/swagger.json")
 	if err != nil {
 		log.Fatalf("Failed to read Swagger file: %v", err)
@@ -111,7 +101,6 @@ func main() {
 		Theme:             scalar.ThemeKepler,
 	}))
 
-	// AsyncAPI docs (MQTT)
 	app.Use("/mqtt-docs/*", static.New("./docs/mqtt-docs"))
 
 	log.Fatal(app.Listen(":" + config.PORT))

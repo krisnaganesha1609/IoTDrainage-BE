@@ -9,14 +9,12 @@ import (
 	"github.com/krisnaganesha1609/IoTDrainage-BE/utils"
 )
 
-// ReceiveDeviceInfoFromMQTT subscribes to the device-info topic.
-// Sent once per cold boot or commissioning; stores IP and location to Firestore.
-//
-// Called from inside OnConnectHandler — re-subscribes on every (re)connect.
 func (h *Handler) ReceiveDeviceInfoFromMQTT(client mqtt.Client, config *utils.MQTTConfig) {
 	topic := config.TopicDeviceInfo()
 
 	token := client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+		h.MQTTClient.MarkMessageReceived()
+
 		var payload requests.DeviceInfoRequest
 		if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
 			log.Errorf("[MQTT] Gagal unmarshal device-info: %v", err)

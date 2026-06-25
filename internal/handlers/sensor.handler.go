@@ -10,16 +10,13 @@ import (
 	"github.com/krisnaganesha1609/IoTDrainage-BE/utils"
 )
 
-// ReceiveSensorFromMQTT subscribes to the sensor-data topic and processes
-// each incoming message inside the MQTT callback.
-//
-// IMPORTANT: this is called from inside OnConnectHandler (see mqtt.go /
-// SubscribeAllMQTT), so it re-subscribes on every connect AND every
-// reconnect — not just once at startup.
 func (h *Handler) ReceiveSensorFromMQTT(client mqtt.Client, config *utils.MQTTConfig) {
 	topic := config.TopicSensorData()
 
 	token := client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+		// Notify connection watchdog that the connection is alive.
+		h.MQTTClient.MarkMessageReceived()
+
 		var payload requests.SensorDataRequest
 		if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
 			log.Errorf("[MQTT] Gagal unmarshal sensor-data: %v", err)
@@ -50,7 +47,6 @@ func (h *Handler) GetSensorHistory(c fiber.Ctx) error {
 	if err != nil {
 		return utils.RespondWithError(c, err.Code, err.Message)
 	}
-
 	return utils.RespondWithOK(c, "Sensor history fetched successfully", data)
 }
 
